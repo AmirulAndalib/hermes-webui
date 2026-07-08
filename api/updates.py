@@ -1161,7 +1161,12 @@ def check_for_updates(force=False, *, include_agent=True, channel=None):
     try:
         # Run checks outside the lock (network I/O)
         webui_info = _check_repo(REPO_ROOT, 'webui', channel)
-        agent_info = _check_repo(_AGENT_DIR, 'agent', channel) if include_agent else _ignored_agent_update_info()
+        # The update channel is a WebUI-only concept. The Agent is a separate
+        # project that tags plain v* and legitimately tracks master past its
+        # tags; it must ALWAYS use the default channel regardless of the user's
+        # WebUI channel selection. (Codex gate: passing 'experimental' here made
+        # the Agent ignore its v* tags and fall back to origin/master.)
+        agent_info = _check_repo(_AGENT_DIR, 'agent', DEFAULT_UPDATE_CHANNEL) if include_agent else _ignored_agent_update_info()
 
         with _cache_lock:
             _update_cache['webui'] = webui_info
@@ -1687,6 +1692,8 @@ def apply_force_update(target: str, channel=None) -> dict:
             path = REPO_ROOT
         elif target == 'agent':
             path = _AGENT_DIR
+            # Channel is WebUI-only — the Agent always uses the default channel.
+            channel = DEFAULT_UPDATE_CHANNEL
         else:
             return {'ok': False, 'message': f'Unknown target: {target}'}
 
@@ -1859,6 +1866,9 @@ def _apply_update_inner(target, channel=DEFAULT_UPDATE_CHANNEL):
         path = REPO_ROOT
     elif target == 'agent':
         path = _AGENT_DIR
+        # Channel is WebUI-only — the Agent always uses the default channel
+        # regardless of the user's WebUI selection (see check_for_updates).
+        channel = DEFAULT_UPDATE_CHANNEL
     else:
         return {'ok': False, 'message': f'Unknown target: {target}'}
 
