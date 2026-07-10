@@ -9495,79 +9495,83 @@ def _run_agent_streaming(
                     logger.debug("Failed to sync session to insights")
             # A late cancel can land during memory/state-sync writeback. Do not
             # clear a credential-exhausted process-wakeup pause unless this run
-            # is still settling as a normal completion.
-            if cancel_event.is_set():
-                _finalize_cancelled_turn(s, ephemeral=False)
+            # is still settling as a normal completion. The pause re-read, clear,
+            # restore, and save must stay under the session lock so a concurrent
+            # suppression cannot observe stale pause state or lose its update.
+            _lock_ctx = _agent_lock if _agent_lock is not None else contextlib.nullcontext()
+            with _lock_ctx:
+                if cancel_event.is_set():
+                    _finalize_cancelled_turn(s, ephemeral=False)
+                    try:
+                        append_turn_journal_event_for_stream(
+                            s.session_id,
+                            stream_id,
+                            {
+                                "event": "interrupted",
+                                "created_at": time.time(),
+                                "reason": "cancelled",
+                            },
+                        )
+                    except Exception:
+                        logger.debug("Failed to append cancelled turn journal event", exc_info=True)
+                    put('cancel', _cancel_event_payload('Cancelled by user'))
+                    return
                 try:
-                    append_turn_journal_event_for_stream(
-                        s.session_id,
-                        stream_id,
-                        {
-                            "event": "interrupted",
-                            "created_at": time.time(),
-                            "reason": "cancelled",
-                        },
+                    _latest_pause_owner = get_session(getattr(s, 'session_id', session_id))
+                    s.process_wakeup_pause = dict(
+                        getattr(_latest_pause_owner, 'process_wakeup_pause', {}) or {}
                     )
                 except Exception:
-                    logger.debug("Failed to append cancelled turn journal event", exc_info=True)
-                put('cancel', _cancel_event_payload('Cancelled by user'))
-                return
-            try:
-                _latest_pause_owner = get_session(getattr(s, 'session_id', session_id))
-                s.process_wakeup_pause = dict(
-                    getattr(_latest_pause_owner, 'process_wakeup_pause', {}) or {}
-                )
-            except Exception:
-                logger.debug(
-                    "Failed to re-read process wakeup pause before success clear",
-                    exc_info=True,
-                )
-            _process_wakeup_pause_before_clear = dict(getattr(s, 'process_wakeup_pause', {}) or {})
-            if clear_process_wakeup_pause(s, reason='run_completed'):
-                if cancel_event.is_set():
-                    s.process_wakeup_pause = dict(_process_wakeup_pause_before_clear)
-                    try:
+                    logger.debug(
+                        "Failed to re-read process wakeup pause before success clear",
+                        exc_info=True,
+                    )
+                _process_wakeup_pause_before_clear = dict(getattr(s, 'process_wakeup_pause', {}) or {})
+                if clear_process_wakeup_pause(s, reason='run_completed'):
+                    if cancel_event.is_set():
+                        s.process_wakeup_pause = dict(_process_wakeup_pause_before_clear)
+                        try:
+                            s.save(touch_updated_at=False)
+                        except Exception:
+                            logger.debug("Failed to persist restored process wakeup pause", exc_info=True)
+                        _finalize_cancelled_turn(s, ephemeral=False)
+                        try:
+                            append_turn_journal_event_for_stream(
+                                s.session_id,
+                                stream_id,
+                                {
+                                    "event": "interrupted",
+                                    "created_at": time.time(),
+                                    "reason": "cancelled",
+                                },
+                            )
+                        except Exception:
+                            logger.debug("Failed to append cancelled turn journal event", exc_info=True)
+                        put('cancel', _cancel_event_payload('Cancelled by user'))
+                        return
+                    with _stream_writeback_stage(_writeback_timings, "process_wakeup_pause_clear_save"):
                         s.save(touch_updated_at=False)
-                    except Exception:
-                        logger.debug("Failed to persist restored process wakeup pause", exc_info=True)
-                    _finalize_cancelled_turn(s, ephemeral=False)
-                    try:
-                        append_turn_journal_event_for_stream(
-                            s.session_id,
-                            stream_id,
-                            {
-                                "event": "interrupted",
-                                "created_at": time.time(),
-                                "reason": "cancelled",
-                            },
-                        )
-                    except Exception:
-                        logger.debug("Failed to append cancelled turn journal event", exc_info=True)
-                    put('cancel', _cancel_event_payload('Cancelled by user'))
-                    return
-                with _stream_writeback_stage(_writeback_timings, "process_wakeup_pause_clear_save"):
-                    s.save(touch_updated_at=False)
-                if cancel_event.is_set():
-                    s.process_wakeup_pause = dict(_process_wakeup_pause_before_clear)
-                    try:
-                        s.save(touch_updated_at=False)
-                    except Exception:
-                        logger.debug("Failed to persist restored process wakeup pause", exc_info=True)
-                    _finalize_cancelled_turn(s, ephemeral=False)
-                    try:
-                        append_turn_journal_event_for_stream(
-                            s.session_id,
-                            stream_id,
-                            {
-                                "event": "interrupted",
-                                "created_at": time.time(),
-                                "reason": "cancelled",
-                            },
-                        )
-                    except Exception:
-                        logger.debug("Failed to append cancelled turn journal event", exc_info=True)
-                    put('cancel', _cancel_event_payload('Cancelled by user'))
-                    return
+                    if cancel_event.is_set():
+                        s.process_wakeup_pause = dict(_process_wakeup_pause_before_clear)
+                        try:
+                            s.save(touch_updated_at=False)
+                        except Exception:
+                            logger.debug("Failed to persist restored process wakeup pause", exc_info=True)
+                        _finalize_cancelled_turn(s, ephemeral=False)
+                        try:
+                            append_turn_journal_event_for_stream(
+                                s.session_id,
+                                stream_id,
+                                {
+                                    "event": "interrupted",
+                                    "created_at": time.time(),
+                                    "reason": "cancelled",
+                                },
+                            )
+                        except Exception:
+                            logger.debug("Failed to append cancelled turn journal event", exc_info=True)
+                        put('cancel', _cancel_event_payload('Cancelled by user'))
+                        return
             usage = {
                 'input_tokens': input_tokens,
                 'output_tokens': output_tokens,

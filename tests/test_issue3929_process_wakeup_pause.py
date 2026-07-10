@@ -766,6 +766,114 @@ def test_process_wakeup_pause_successful_clear_serializes_against_concurrent_sup
     assert saved.process_wakeup_pause == {}
 
 
+def test_streaming_success_pause_clear_serializes_against_concurrent_suppression(tmp_path, monkeypatch):
+    stream_id = "streaming-pause-clear-vs-suppress"
+    session_id = "streaming_pause_clear_vs_suppress"
+    stream_queue = queue.Queue()
+    config.STREAMS[stream_id] = stream_queue
+    previous_pause = {
+        "paused": True,
+        "model": "test-model",
+        "provider": "test-provider",
+        "classification": "credential_pool_empty",
+        "first_paused_at": 1.0,
+        "last_visible_error_at": 1.0,
+        "visible_error_count": 1,
+        "suppressed_count": 2,
+        "credential_state_fingerprint": "fingerprint-before",
+    }
+    session = Session(
+        session_id=session_id,
+        workspace=str(tmp_path),
+        model="test-model",
+        model_provider="test-provider",
+        messages=[{"role": "user", "content": "before", "timestamp": 1.0}],
+        context_messages=[{"role": "user", "content": "before"}],
+        active_stream_id=stream_id,
+        pending_user_message="recover",
+        pending_user_source="process_wakeup",
+        process_wakeup_pause=dict(previous_pause),
+    )
+    session.save()
+    models.SESSIONS[session_id] = session
+
+    monkeypatch.setattr(routes, "_resolve_chat_workspace_with_recovery", lambda _s, _w: str(tmp_path))
+    monkeypatch.setattr(routes, "_read_profile_model_config", lambda _s, _p: (None, None, {}))
+    monkeypatch.setattr(
+        routes,
+        "_resolve_compatible_session_model_state",
+        lambda *_args, **_kwargs: ("test-model", "test-provider", False),
+    )
+    responses = {}
+    starts = []
+
+    def _fake_start_run(s, **kwargs):
+        starts.append((threading.current_thread().name, kwargs.get("source")))
+        return {
+            "stream_id": f"stream-{threading.current_thread().name}",
+            "session_id": s.session_id,
+            "_status": 200,
+        }
+
+    monkeypatch.setattr(routes, "_start_run", _fake_start_run)
+
+    suppress_started = threading.Event()
+    suppress_thread_holder = {}
+
+    def _run_suppress():
+        suppress_started.set()
+        responses["suppress"] = routes.start_session_turn(
+            session_id,
+            "[IMPORTANT: Background process completed while streaming success settles.]",
+            source="process_wakeup",
+        )
+
+    original_save = Session.save
+    save_calls = {"clear_save": 0}
+
+    def _save_and_race_suppression(self, *args, **kwargs):
+        if (
+            getattr(self, "session_id", None) == session_id
+            and save_calls["clear_save"] == 0
+            and not (getattr(self, "process_wakeup_pause", {}) or {})
+        ):
+            lock = config.SESSION_AGENT_LOCKS.get(session_id)
+            assert lock is not None
+            assert lock.locked()
+            save_calls["clear_save"] += 1
+            suppress_thread = threading.Thread(target=_run_suppress, name="pause-suppress")
+            suppress_thread_holder["thread"] = suppress_thread
+            suppress_thread.start()
+            assert suppress_started.wait(timeout=3)
+        return original_save(self, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "save", _save_and_race_suppression)
+
+    with mock.patch.object(streaming, "_get_ai_agent", return_value=_SuccessfulAgent), \
+         mock.patch.object(streaming, "resolve_model_provider", return_value=("test-model", "test-provider", None)), \
+         mock.patch("api.config._resolve_cli_toolsets", return_value=[]):
+        streaming._run_agent_streaming(
+            session_id=session.session_id,
+            msg_text=session.pending_user_message,
+            model="test-model",
+            model_provider="test-provider",
+            workspace=str(tmp_path),
+            stream_id=stream_id,
+        )
+
+    suppress_thread = suppress_thread_holder.get("thread")
+    assert suppress_thread is not None
+    suppress_thread.join(timeout=3)
+    assert not suppress_thread.is_alive()
+    assert save_calls["clear_save"] == 1
+    assert responses["suppress"]["_status"] == 200
+    assert responses["suppress"]["stream_id"] == "stream-pause-suppress"
+    assert starts == [("pause-suppress", "process_wakeup")]
+    saved = Session.load(session_id)
+    assert saved is not None
+    assert saved.process_wakeup_pause == {}
+
+
 def test_process_wakeup_pause_survives_rotation_style_auth_rewrite(tmp_path, monkeypatch):
     hermes_home = tmp_path / "hermes-home"
     hermes_home.mkdir()
