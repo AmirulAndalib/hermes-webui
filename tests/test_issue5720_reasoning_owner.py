@@ -104,13 +104,29 @@ def test_reasoning_fallback_respects_show_thinking_false():
 
 
 @pytest.mark.skipif(NODE is None, reason="node not on PATH")
-def test_reasoning_fallback_does_not_reuse_another_sessions_live_turn():
+def test_reasoning_rebuilds_when_another_sessions_live_turn_blocks_anchor():
+    result = _run_reasoning_scene(stale_live_turn=True)
+
+    assert result["first_text"] == "Plan"
+    assert result["second_text"] == "Plan step"
+    assert result["live_reasoning_rows"] == 1
+    assert result["fallback_rows_after_recovery"] == 0
+    assert result["anchor_reasoning_events"] == 1
+    assert result["anchor_reasoning_text"] == "Plan step"
+    assert result["inflight_reasoning_text"] == "Plan step"
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_reasoning_fallback_rebuilds_from_another_sessions_live_turn():
     result = _run_reasoning_scene(
         fail_first_anchor_render=True,
         stale_live_turn=True,
     )
 
-    assert result["live_reasoning_rows"] == 0
+    assert result["first_text"] is None
+    assert result["first_fallback_text"] == "Plan"
+    assert result["second_text"] == "Plan step"
+    assert result["live_reasoning_rows"] == 1
     assert result["fallback_rows_after_recovery"] == 0
     assert result["anchor_reasoning_events"] == 1
     assert result["anchor_reasoning_text"] == "Plan step"
@@ -366,6 +382,7 @@ for(const name of [
   '_transparentLiveRowKey','_transparentLiveRowsCompatible',
   '_transparentLiveRowAttributePairs','_transparentLiveRowInteractiveState',
   '_refreshTransparentThinkingLiveRow','_refreshTransparentLiveRow',
+  '_resetMismatchedLiveAssistantTurnForSession',
   'isLiveAnchorActivitySceneOwner','_projectLiveAnchorActivitySceneForStream',
   '_renderLiveAnchorActivitySceneTransparent','renderLiveAnchorActivityScene',
   '_renderLiveAnchorActivitySceneForStream','appendThinking','updateThinking',

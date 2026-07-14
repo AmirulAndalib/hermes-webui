@@ -12344,6 +12344,22 @@ function _prepareLiveAnchorScrollRebuildGuard(scrollSnapshot){
     },
   };
 }
+function _resetMismatchedLiveAssistantTurnForSession(turn, sessionId){
+  const sid=String(sessionId||'');
+  if(!turn||!sid||!turn.dataset) return false;
+  const existingSid=String(turn.dataset.sessionId||'');
+  if(!existingSid||existingSid===sid) return false;
+  const blocks=typeof _assistantTurnBlocks==='function' ? _assistantTurnBlocks(turn) : turn;
+  if(blocks){
+    try{
+      blocks.innerHTML='';
+    }catch(_){
+      while(blocks.firstChild) blocks.removeChild(blocks.firstChild);
+    }
+  }
+  turn.dataset.sessionId=sid;
+  return true;
+}
 function renderLiveAnchorActivityScene(streamId, scene, opts){
   opts=opts||{};
   const requestedMode=opts.mode;
@@ -12363,7 +12379,9 @@ function renderLiveAnchorActivityScene(streamId, scene, opts){
   const existingTurn=$('liveAssistantTurn');
   const requestedSessionId=String(opts.sessionId||'');
   const existingTurnSessionId=String(existingTurn&&existingTurn.dataset&&existingTurn.dataset.sessionId||'');
-  if(existingTurn&&requestedSessionId&&existingTurnSessionId&&existingTurnSessionId!==requestedSessionId) return false;
+  if(existingTurn&&requestedSessionId&&existingTurnSessionId&&existingTurnSessionId!==requestedSessionId){
+    if(!_resetMismatchedLiveAssistantTurnForSession(existingTurn, requestedSessionId)) return false;
+  }
   if(sceneMode==='transparent_stream'){
     return _renderLiveAnchorActivitySceneTransparent(streamId,scene,opts);
   }
@@ -18447,7 +18465,9 @@ function appendThinking(text='', options){
   const existingLiveTurn=$('liveAssistantTurn');
   if(anchorRenderFallback&&existingLiveTurn&&existingLiveTurn.dataset&&
       existingLiveTurn.dataset.sessionId&&
-      String(existingLiveTurn.dataset.sessionId)!==String(S.session.session_id||'')) return;
+      String(existingLiveTurn.dataset.sessionId)!==String(S.session.session_id||'')){
+    if(!_resetMismatchedLiveAssistantTurnForSession(existingLiveTurn, S.session.session_id)) return;
+  }
   if(!allowPendingPlaceholder&&!anchorRenderFallback&&isLiveAnchorActivitySceneOwner(S.activeStreamId)){
     _renderLiveAnchorActivitySceneForStream(S.activeStreamId, S.session.session_id);
     return;
