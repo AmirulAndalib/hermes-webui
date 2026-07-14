@@ -5357,7 +5357,7 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
       if(text&&S.session&&S.session.session_id===activeSid&&S.activeStreamId===streamId){
         const liveThinkingText=_liveThinkingText();
         if(!_upsertAnchorReasoning(liveThinkingText)){
-          _updateLiveThinkingCard(liveThinkingText,{anchorRenderFallback:true});
+          _updateLiveThinkingCard(liveThinkingText,{anchorRenderFallback:true,sessionId:activeSid,streamId});
         }
       }
     });

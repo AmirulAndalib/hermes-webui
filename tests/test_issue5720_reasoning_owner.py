@@ -19,6 +19,7 @@ def _run_reasoning_scene(
     *,
     fail_first_anchor_render: bool = False,
     stale_active_stream: bool = False,
+    stale_live_turn: bool = False,
     show_thinking: bool = True,
 ) -> dict:
     assert NODE, "node is required for the #5720 browser-chain regression"
@@ -33,6 +34,8 @@ def _run_reasoning_scene(
         env["ISSUE5720_FAIL_FIRST_ANCHOR_RENDER"] = "1"
     if stale_active_stream:
         env["ISSUE5720_STALE_ACTIVE_STREAM"] = "1"
+    if stale_live_turn:
+        env["ISSUE5720_STALE_LIVE_TURN"] = "1"
     if not show_thinking:
         env["ISSUE5720_SHOW_THINKING"] = "0"
     result = subprocess.run(
@@ -98,6 +101,20 @@ def test_reasoning_fallback_respects_show_thinking_false():
     assert result["live_reasoning_rows"] == 0
     assert result["fallback_rows_after_recovery"] == 0
     assert result["anchor_reasoning_events"] == 0
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_reasoning_fallback_does_not_reuse_another_sessions_live_turn():
+    result = _run_reasoning_scene(
+        fail_first_anchor_render=True,
+        stale_live_turn=True,
+    )
+
+    assert result["live_reasoning_rows"] == 0
+    assert result["fallback_rows_after_recovery"] == 0
+    assert result["anchor_reasoning_events"] == 1
+    assert result["anchor_reasoning_text"] == "Plan step"
+    assert result["inflight_reasoning_text"] == "Plan step"
 
 
 _NODE_SCENE = r"""
@@ -295,6 +312,7 @@ const messages=new FakeElement('div');
 const turn=new FakeElement('div');
 turn.id='liveAssistantTurn';
 turn.className='assistant-turn';
+turn.dataset.sessionId=process.env.ISSUE5720_STALE_LIVE_TURN==='1'?'sid-old':'sid-1';
 msgInner.appendChild(turn);
 const byId={emptyState,msgInner,messages,liveAssistantTurn:turn};
 global.$=id=>byId[id]||null;

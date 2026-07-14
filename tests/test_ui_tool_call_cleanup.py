@@ -689,7 +689,7 @@ class TestToolCallGroupingStatic:
         assert "_upsertAnchorReasoning(liveThinkingText)" in reasoning_fn, (
             "Anchor reasoning must remain the primary renderer path."
         )
-        fallback_call = "_updateLiveThinkingCard(liveThinkingText,{anchorRenderFallback:true})"
+        fallback_call = "_updateLiveThinkingCard(liveThinkingText,{anchorRenderFallback:true,sessionId:activeSid,streamId})"
         assert reasoning_fn.index("_upsertAnchorReasoning(liveThinkingText)") < reasoning_fn.index(
             fallback_call
         ), (
